@@ -293,6 +293,14 @@ int SDF_ExternalPublicKeyOperation_RSA(
 	unsigned char *pucDataOutput,
 	unsigned int *puiOutputLength);
 
+int SDF_ExternalPrivateKeyOperation_RSA(
+	void *hSessionHandle,
+	RSArefPrivateKey *pucPrivateKey,
+	unsigned char *pucDataInput,
+	unsigned int uiInputLength,
+	unsigned char *pucDataOutput,
+	unsigned int *puiOutputLength);
+
 int SDF_InternalPublicKeyOperation_RSA(
 	void *hSessionHandle,
 	unsigned int uiKeyIndex,
@@ -427,6 +435,181 @@ int SDF_DeleteFile(
 	void *hSessionHandle,
 	unsigned char *pucFileName,
 	unsigned int uiNameLen);
+
+/* GM/T 0018-2023 多包对称运算(6.5.7~6.5.15) */
+int SDF_EncryptInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucIV,
+	unsigned int uiIVLength);
+
+int SDF_EncryptUpdate(
+	void *hSessionHandle,
+	unsigned char *pucData,
+	unsigned int uiDataLength,
+	unsigned char *pucEncData,
+	unsigned int *puiEncDataLength);
+
+int SDF_EncryptFinal(
+	void *hSessionHandle,
+	unsigned char *pucEncData,
+	unsigned int *puiEncDataLength);
+
+int SDF_DecryptInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucIV,
+	unsigned int uiIVLength);
+
+int SDF_DecryptUpdate(
+	void *hSessionHandle,
+	unsigned char *pucEncData,
+	unsigned int uiEncDataLength,
+	unsigned char *pucData,
+	unsigned int *puiDataLength);
+
+int SDF_DecryptFinal(
+	void *hSessionHandle,
+	unsigned char *pucData,
+	unsigned int *puiDataLength);
+
+int SDF_CalculateMACInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucIV,
+	unsigned int uiIVLength);
+
+int SDF_CalculateMACUpdate(
+	void *hSessionHandle,
+	unsigned char *pucData,
+	unsigned int uiDataLength);
+
+int SDF_CalculateMACFinal(
+	void *hSessionHandle,
+	unsigned char *pucMAC,
+	unsigned int *puiMACLength);
+
+/* GM/T 0018-2023 可鉴别加解密(6.5.5~6.5.21,表13) */
+int SDF_AuthEnc(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucStartVar,
+	unsigned int uiStartVarLength,
+	unsigned char *pucAad,
+	unsigned int uiAadLength,
+	unsigned char *pucData,
+	unsigned int uiDataLength,
+	unsigned char *pucEncData,
+	unsigned int *puiEncDataLength,
+	unsigned char *pucAuthData,
+	unsigned int *puiAuthDataLength);
+
+int SDF_AuthDec(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucStartVar,
+	unsigned int uiStartVarLength,
+	unsigned char *pucAad,
+	unsigned int uiAadLength,
+	unsigned char *pucAuthData,
+	unsigned int uiAuthDataLength,
+	unsigned char *pucEncData,
+	unsigned int uiEncDataLength,
+	unsigned char *pucData,
+	unsigned int *puiDataLength);
+
+int SDF_AuthEncInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucStartVar,
+	unsigned int uiStartVarLength,
+	unsigned char *pucAad,
+	unsigned int uiAadLength,
+	unsigned int uiDataLength);
+
+int SDF_AuthEncUpdate(
+	void *hSessionHandle,
+	unsigned char *pucData,
+	unsigned int uiDataLength,
+	unsigned char *pucEncData,
+	unsigned int *puiEncDataLength);
+
+int SDF_AuthEncFinal(
+	void *hSessionHandle,
+	unsigned char *pucLastEncData,
+	unsigned int *puiLastEncDataLength,
+	unsigned char *pucAuthData,
+	unsigned int *puiAuthDataLength);
+
+int SDF_AuthDecInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID,
+	unsigned char *pucStartVar,
+	unsigned int uiStartVarLength,
+	unsigned char *pucAad,
+	unsigned int uiAadLength,
+	unsigned char *pucAuthData,
+	unsigned int uiAuthDataLength,
+	unsigned int uiDataLength);
+
+int SDF_AuthDecUpdate(
+	void *hSessionHandle,
+	unsigned char *pucEncData,
+	unsigned int uiEncDataLength,
+	unsigned char *pucData,
+	unsigned int *puiDataLength);
+
+int SDF_AuthDecFinal(
+	void *hSessionHandle,
+	unsigned char *pucLastData,
+	unsigned int *puiLastDataLength);
+
+/* GM/T 0018-2023 带密钥的杂凑(6.6.2~6.6.4,密钥句柄 ABI) */
+int SDF_HMACInit(
+	void *hSessionHandle,
+	void *hKeyHandle,
+	unsigned int uiAlgID);
+
+int SDF_HMACUpdate(
+	void *hSessionHandle,
+	unsigned char *pucData,
+	unsigned int uiDataLength);
+
+int SDF_HMACFinal(
+	void *hSessionHandle,
+	unsigned char *pucMAC,
+	unsigned int *puiMACLength);
+
+/* 明文会话密钥导入(2012 6.3.20) */
+int SDF_ImportKey(
+	void *hSessionHandle,
+	unsigned char *pucKey,
+	unsigned int uiKeyLength,
+	void **phKeyHandle);
+
+/* 外部私钥签名/解密(2023 表16) */
+int SDF_ExternalSign_ECC(
+	void *hSessionHandle,
+	unsigned int uiAlgID,
+	ECCrefPrivateKey *pucPrivateKey,
+	unsigned char *pucData,
+	unsigned int uiDataLength,
+	ECCSignature *pucSignature);
+
+int SDF_ExternalDecrypt_ECC(
+	void *hSessionHandle,
+	unsigned int uiAlgID,
+	ECCrefPrivateKey *pucPrivateKey,
+	ECCCipher *pucEncData,
+	unsigned char *pucData,
+	unsigned int *puiDataLength);
 
 #define SDR_OK			0x0
 #define SDR_BASE		0x01000000

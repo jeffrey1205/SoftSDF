@@ -11,8 +11,8 @@ else()
 	add_compile_options(-Wall)
 endif()
 
-set(SOFTSDF_SRC softsdf.c)
-set(SOFTSDFINIT_SRC softsdfinit.c)
+set(SOFTSDF_SRC softsdf.c softsdf_rsa.c)
+set(SOFTSDFINIT_SRC softsdfinit.c softsdf_rsa.c)
 
 set(GmSSL_ROOT_DIR "" CACHE PATH "Root directory of a GmSSL static installation")
 
@@ -58,7 +58,7 @@ add_executable(softsdfinit ${SOFTSDFINIT_SRC})
 target_include_directories(softsdfinit PRIVATE ${GmSSL_INCLUDE_DIR})
 target_link_libraries(softsdfinit PRIVATE ${GmSSL_LIBRARY})
 
-add_executable(softsdftest softsdftest.c)
+add_executable(softsdftest softsdftest.c softsdf_rsa.c)
 target_include_directories(softsdftest PRIVATE ${GmSSL_INCLUDE_DIR})
 target_link_libraries(softsdftest PRIVATE softsdf ${GmSSL_LIBRARY})
 
@@ -75,6 +75,16 @@ endif()
 option(ENABLE_SM4_CFB "Enable SM4 CFB mode" ON)
 if (ENABLE_SM4_CFB)
 	add_definitions(-DENABLE_SM4_CFB)
+endif()
+
+option(ENABLE_SHA2 "Enable SHA2 digests (DIGEST_sha256 for SDF_HMACInit)" ON)
+if (ENABLE_SHA2)
+	add_definitions(-DENABLE_SHA2)
+endif()
+
+# GmSSL lib is built with ENABLE_SM4_CCM; needed for the sm4_ccm_* declarations
+if (NOT WIN32)
+	add_definitions(-DENABLE_SM4_CCM)
 endif()
 
 
@@ -98,7 +108,19 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+	set(SOFTSDF_FIXTURE_DIR ${CMAKE_CURRENT_BINARY_DIR}/softsdfinit-fixtures)
+	add_test(NAME softsdfinit-fixtures
+		COMMAND ${CMAKE_COMMAND}
+			-DSOFTSDFINIT=$<TARGET_FILE:softsdfinit>
+			-DWORK_DIR=${SOFTSDF_FIXTURE_DIR}
+			-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-softsdfinit-fixtures.cmake)
+	set_tests_properties(softsdfinit-fixtures PROPERTIES
+		FIXTURES_SETUP softsdf-keys)
+
 	add_test(NAME softsdftest COMMAND softsdftest)
+	set_tests_properties(softsdftest PROPERTIES
+		FIXTURES_REQUIRED softsdf-keys
+		WORKING_DIRECTORY ${SOFTSDF_FIXTURE_DIR})
 	if(GmSSL_GMSSL_EXECUTABLE)
 		add_test(NAME gmssl-sdftest
 			COMMAND ${CMAKE_COMMAND}

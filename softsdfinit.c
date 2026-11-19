@@ -13,6 +13,8 @@
 #include <gmssl/sm2.h>
 #include <gmssl/rand.h>
 #include <gmssl/error.h>
+#include <gmssl/mem.h>
+#include "softsdf_rsa.h"
 
 
 static const char *usage = "-kek num -key num -pass str";
@@ -96,6 +98,26 @@ static int generate_sign_key(unsigned int uiKeyIndex, const char *pass)
 
 	printf("SM2 signing key pair #%u generated, saved to sm2sign-%u.pem and sm2signpub-%u.pem\n", uiKeyIndex, uiKeyIndex, uiKeyIndex);
 
+	/* RSA companion key for the internal signing domain (SDF_Internal*_RSA) */
+	{
+		RSArefPublicKey pub;
+		RSArefPrivateKey priv;
+
+		if (softsdf_rsa_keygen(2048, &pub, &priv) != 0) {
+			error_print();
+			return -1;
+		}
+		snprintf(filename, sizeof(filename), "rsasign-%u.key", uiKeyIndex);
+		if (softsdf_rsa_keyfile_save(filename, &priv) != 0) {
+			error_print();
+			gmssl_secure_clear(&priv, sizeof(priv));
+			return -1;
+		}
+		gmssl_secure_clear(&priv, sizeof(priv));
+		printf("RSA signing key #%u generated, saved to %s\n",
+			uiKeyIndex, filename);
+	}
+
 	return 1;
 }
 
@@ -135,6 +157,26 @@ static int generate_enc_key(unsigned int uiKeyIndex, const char *pass)
 	fclose(file);
 
 	printf("SM2 encryption key pair #%u generated, saved to sm2enc-%u.pem and sm2encpub-%u.pem\n", uiKeyIndex, uiKeyIndex, uiKeyIndex);
+
+	/* RSA companion key for the envelope domain (IPK/EPK/ISK/Exchange) */
+	{
+		RSArefPublicKey pub;
+		RSArefPrivateKey priv;
+
+		if (softsdf_rsa_keygen(2048, &pub, &priv) != 0) {
+			error_print();
+			return -1;
+		}
+		snprintf(filename, sizeof(filename), "rsaenc-%u.key", uiKeyIndex);
+		if (softsdf_rsa_keyfile_save(filename, &priv) != 0) {
+			error_print();
+			gmssl_secure_clear(&priv, sizeof(priv));
+			return -1;
+		}
+		gmssl_secure_clear(&priv, sizeof(priv));
+		printf("RSA encryption key #%u generated, saved to %s\n",
+			uiKeyIndex, filename);
+	}
 
 	return 1;
 }
