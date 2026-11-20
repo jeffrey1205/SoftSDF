@@ -10,11 +10,40 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include <gmssl/sm2.h>
 #include <gmssl/rand.h>
 #include <gmssl/error.h>
 #include <gmssl/mem.h>
 #include "softsdf_rsa.h"
+
+/* 私有密钥文件以 0600 创建(POSIX)/以读写属性创建(Windows),
+ * 避免 fopen 默认 0644 在写入前留下可读窗口。 */
+static FILE *open_private_file(const char *path)
+{
+	int fd;
+	FILE *file;
+
+#ifdef _WIN32
+	fd = _open(path, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+		_S_IREAD | _S_IWRITE);
+	file = fd >= 0 ? _fdopen(fd, "wb") : NULL;
+	if (fd >= 0 && file == NULL)
+		_close(fd);
+#else
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+	file = fd >= 0 ? fdopen(fd, "wb") : NULL;
+	if (fd >= 0 && file == NULL)
+		close(fd);
+#endif
+	return file;
+}
 
 
 static const char *usage = "-kek num -key num -pass str";
@@ -45,7 +74,7 @@ static int generate_kek(unsigned int uiKEKIndex)
 	}
 
 	snprintf(filename, sizeof(filename), "kek-%u.key", uiKEKIndex);
-	if (!(file = fopen(filename, "wb"))) {
+	if (!(file = open_private_file(filename))) {
 		error_print();
 		return -1;
 	}
@@ -73,12 +102,12 @@ static int generate_sign_key(unsigned int uiKeyIndex, const char *pass)
 	}
 
 	snprintf(filename, sizeof(filename), "sm2sign-%u.pem", uiKeyIndex);
-	if ((file = fopen(filename, "wb")) == NULL) {
-		fclose(file);
+	if ((file = open_private_file(filename)) == NULL) {
 		error_print();
 		return -1;
 	}
 	if (sm2_private_key_info_encrypt_to_pem(&sm2_key, pass, file) != 1) {
+		fclose(file);
 		error_print();
 		return -1;
 	}
@@ -86,11 +115,11 @@ static int generate_sign_key(unsigned int uiKeyIndex, const char *pass)
 
 	snprintf(filename, sizeof(filename), "sm2signpub-%u.pem", uiKeyIndex);
 	if ((file = fopen(filename, "wb")) == NULL) {
-		fclose(file);
 		error_print();
 		return -1;
 	}
 	if (sm2_public_key_info_to_pem(&sm2_key, file) != 1) {
+		fclose(file);
 		error_print();
 		return -1;
 	}
@@ -133,12 +162,12 @@ static int generate_enc_key(unsigned int uiKeyIndex, const char *pass)
 	}
 
 	snprintf(filename, sizeof(filename), "sm2enc-%u.pem", uiKeyIndex);
-	if ((file = fopen(filename, "wb")) == NULL) {
-		fclose(file);
+	if ((file = open_private_file(filename)) == NULL) {
 		error_print();
 		return -1;
 	}
 	if (sm2_private_key_info_encrypt_to_pem(&sm2_key, pass, file) != 1) {
+		fclose(file);
 		error_print();
 		return -1;
 	}
@@ -146,11 +175,11 @@ static int generate_enc_key(unsigned int uiKeyIndex, const char *pass)
 
 	snprintf(filename, sizeof(filename), "sm2encpub-%u.pem", uiKeyIndex);
 	if ((file = fopen(filename, "wb")) == NULL) {
-		fclose(file);
 		error_print();
 		return -1;
 	}
 	if (sm2_public_key_info_to_pem(&sm2_key, file) != 1) {
+		fclose(file);
 		error_print();
 		return -1;
 	}

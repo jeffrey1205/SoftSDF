@@ -37,8 +37,17 @@ jobs:
       - name: Checkout SoftSDF
         uses: actions/checkout@v4
 
-      - name: Checkout latest GmSSL
-        run: git clone --depth 1 --branch v3.2.0 https://github.com/guanzhi/GmSSL.git "$RUNNER_TEMP/gmssl-src"
+      - name: Check softsdf.exp mirrors softsdf.lds
+        run: |
+          diff <(grep -oE 'SDF_[A-Za-z0-9_]+' softsdf.lds | sort -u) \
+            <(sed 's/^_//' softsdf.exp | sort -u)
+
+      - name: Checkout pinned GmSSL
+        run: |
+          git init "$RUNNER_TEMP/gmssl-src"
+          git -C "$RUNNER_TEMP/gmssl-src" remote add origin https://github.com/guanzhi/GmSSL.git
+          git -C "$RUNNER_TEMP/gmssl-src" fetch --depth 1 origin 24ae482701a7b124826c382fffc55c19f76d475d
+          git -C "$RUNNER_TEMP/gmssl-src" checkout FETCH_HEAD
 
       - name: Configure GmSSL static library
         run: |

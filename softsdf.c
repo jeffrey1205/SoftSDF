@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 #include <gmssl/mem.h>
 #include <gmssl/sm2.h>
 #include <gmssl/sm3.h>
@@ -28,6 +27,8 @@ static const uint8_t zeros[ECCref_MAX_LEN - 32] = {0};
 
 
 #define SOFTSDF_MAX_KEY_SIZE	64
+/* wrapped KEK blob upper bound: IV 16 + PKCS7-padded key (<=64+16) */
+#define SOFTSDF_KEK_WRAPPED_MAX	(SM4_BLOCK_SIZE + SOFTSDF_MAX_KEY_SIZE + SM4_BLOCK_SIZE)
 
 struct SOFTSDF_KEY {
 	uint8_t key[SOFTSDF_MAX_KEY_SIZE];
@@ -171,11 +172,10 @@ int SDF_CloseDevice(
 				error_print();
 			}
 		}
+		memset(deviceHandle, 0, sizeof(SOFTSDF_DEVICE));
+		free(deviceHandle);
+		deviceHandle = NULL;
 	}
-
-	memset(deviceHandle, 0, sizeof(SOFTSDF_DEVICE));
-	free(deviceHandle);
-	deviceHandle = NULL;
 
 	return SDR_OK;
 }
@@ -412,6 +412,9 @@ int SDF_GenerateRandom(
 	return SDR_OK;
 }
 
+static SOFTSDF_CONTAINER *find_container(SOFTSDF_SESSION *session,
+	unsigned int key_index);
+
 int SDF_GetPrivateKeyAccessRight(
 	void *hSessionHandle,
 	unsigned int uiKeyIndex,
@@ -447,6 +450,12 @@ int SDF_GetPrivateKeyAccessRight(
 		error_puts("Invalid password or password length");
 		return SDR_INARGERR;
 	}
+
+	/* already acquired: idempotent, do not append a duplicate container */
+	if (find_container(session, uiKeyIndex) != NULL) {
+		return SDR_OK;
+	}
+
 	pass = (char *)malloc(uiPwdLength + 1);
 	if (pass == NULL) {
 		error_print();
@@ -906,6 +915,7 @@ int SDF_ImportKeyWithISK_RSA(
 	SOFTSDF_SESSION *session;
 	SOFTSDF_KEY *key;
 	RSArefPrivateKey priv;
+	uint8_t tmp[256];	/* decrypt target: unpad may emit up to 255 bytes */
 	size_t mlen = 0;
 	unsigned int k;
 
@@ -931,7 +941,7 @@ int SDF_ImportKeyWithISK_RSA(
 	}
 	if (find_container(session, uiISKIndex) == NULL) {
 		error_puts("ISK not loaded, call GetPrivateKeyAccess before use ISK\n");
-		return SDR_INARGERR;
+		return SDR_PARDENY;
 	}
 	if (rsa_load_keyfile(uiISKIndex, "rsaenc", &priv) != SDR_OK)
 		return SDR_KEYNOTEXIST;
@@ -950,14 +960,24 @@ int SDF_ImportKeyWithISK_RSA(
 	}
 	memset(key, 0, sizeof(*key));
 	if (softsdf_rsa_pkcs1_decrypt(&priv, pucKey, uiKeyLength,
-			key->key, &mlen) != 0) {
+			tmp, sizeof(tmp), &mlen) != 0) {
 		error_print();
 		gmssl_secure_clear(&priv, sizeof(priv));
+		gmssl_secure_clear(tmp, sizeof(tmp));
 		gmssl_secure_clear(key, sizeof(*key));
 		free(key);
 		return SDR_SKOPERR;
 	}
 	gmssl_secure_clear(&priv, sizeof(priv));
+	if (mlen == 0 || mlen > SOFTSDF_MAX_KEY_SIZE) { /* 有界拷进 key->key[64] */
+		error_print();
+		gmssl_secure_clear(tmp, sizeof(tmp));
+		gmssl_secure_clear(key, sizeof(*key));
+		free(key);
+		return SDR_SKOPERR;
+	}
+	memcpy(key->key, tmp, mlen);
+	gmssl_secure_clear(tmp, sizeof(tmp));
 	key->key_size = mlen;
 	if (session->key_list == NULL) {
 		session->key_list = key;
@@ -983,6 +1003,7 @@ int SDF_ExchangeDigitEnvelopeBaseOnRSA(
 {
 	SOFTSDF_SESSION *session;
 	RSArefPrivateKey priv;
+	uint8_t tmp[256];	/* decrypt target: unpad may emit up to 255 bytes */
 	uint8_t session_key[SOFTSDF_MAX_KEY_SIZE];
 	size_t mlen = 0;
 	unsigned int k, kout;
@@ -1014,7 +1035,7 @@ int SDF_ExchangeDigitEnvelopeBaseOnRSA(
 	}
 	if (find_container(session, uiKeyIndex) == NULL) {
 		error_puts("key index not loaded, call GetPrivateKeyAccess first\n");
-		return SDR_INARGERR;
+		return SDR_PARDENY;
 	}
 	if (rsa_load_keyfile(uiKeyIndex, "rsaenc", &priv) != SDR_OK)
 		return SDR_KEYNOTEXIST;
@@ -1032,12 +1053,20 @@ int SDF_ExchangeDigitEnvelopeBaseOnRSA(
 	}
 
 	if (softsdf_rsa_pkcs1_decrypt(&priv, pucDEInput, uiDELength,
-			session_key, &mlen) != 0) {
+			tmp, sizeof(tmp), &mlen) != 0) {
 		error_print();
 		gmssl_secure_clear(&priv, sizeof(priv));
+		gmssl_secure_clear(tmp, sizeof(tmp));
 		return SDR_SKOPERR;
 	}
 	gmssl_secure_clear(&priv, sizeof(priv));
+	if (mlen == 0 || mlen > SOFTSDF_MAX_KEY_SIZE) { /* 有界拷进 session_key[64] */
+		error_print();
+		gmssl_secure_clear(tmp, sizeof(tmp));
+		return SDR_SKOPERR;
+	}
+	memcpy(session_key, tmp, mlen);
+	gmssl_secure_clear(tmp, sizeof(tmp));
 	if (softsdf_rsa_pkcs1_encrypt(pucPublicKey, session_key, mlen,
 			pucDEOutput) != 0) {
 		error_print();
@@ -1539,7 +1568,7 @@ int SDF_ImportKeyWithISK_ECC(
 	}
 	if (container == NULL) {
 		error_puts("ISK not loaded, call GetPrivateKeyAccess before use ISK\n");
-		return SDR_INARGERR;
+		return SDR_PARDENY;
 	}
 
 	if (pucKey == NULL) {
@@ -1960,7 +1989,7 @@ int SDF_ExchangeDigitEnvelopeBaseOnECC(
 	container = find_container(session, uiKeyIndex);
 	if (container == NULL) {
 		error_puts("key index not loaded, call GetPrivateKeyAccess first\n");
-		return SDR_INARGERR;
+		return SDR_PARDENY;
 	}
 
 	if (sm2_decrypt_session_key(&container->enc_key, pucEncDataIn,
@@ -1990,8 +2019,8 @@ int SDF_GenerateKeyWithKEK(
 	FILE *file;
 	uint8_t kek[16];
 	SM4_KEY sm4_key;
-	uint8_t *iv;
-	uint8_t *enced;
+	uint8_t iv[SM4_BLOCK_SIZE];
+	uint8_t enced_buf[SOFTSDF_KEK_WRAPPED_MAX - SM4_BLOCK_SIZE];
 	size_t enced_len;
 	SOFTSDF_KEY *key;
 
@@ -2062,11 +2091,9 @@ int SDF_GenerateKeyWithKEK(
 	}
 	memset(key, 0, sizeof(*key));
 
-	iv = pucKey;
-	enced = pucKey + SM4_BLOCK_SIZE;
-
 	if (rand_bytes(iv, SM4_BLOCK_SIZE) != 1) {
 		error_print();
+		free(key);
 		return SDR_RANDERR;
 	}
 
@@ -2078,13 +2105,27 @@ int SDF_GenerateKeyWithKEK(
 	}
 
 	sm4_set_encrypt_key(&sm4_key, kek);
-	if (sm4_cbc_padding_encrypt(&sm4_key, iv, key->key, key->key_size, enced, &enced_len) != 1) {
+	if (sm4_cbc_padding_encrypt(&sm4_key, iv, key->key, key->key_size,
+			enced_buf, &enced_len) != 1) {
 		error_print();
 		memset(&sm4_key, 0, sizeof(sm4_key));
+		gmssl_secure_clear(enced_buf, sizeof(enced_buf));
 		free(key);
 		return SDR_SYMOPERR;
 	}
 	memset(&sm4_key, 0, sizeof(sm4_key));
+
+	/* in/out capacity semantics: *puiKeyLength is the caller's buffer size;
+	 * the write (IV + padded ciphertext) is bounded by SOFTSDF_KEK_WRAPPED_MAX */
+	if (*puiKeyLength < SM4_BLOCK_SIZE + enced_len) {
+		error_print();
+		gmssl_secure_clear(enced_buf, sizeof(enced_buf));
+		free(key);
+		return SDR_NOBUFFER;
+	}
+	memcpy(pucKey, iv, SM4_BLOCK_SIZE);
+	memcpy(pucKey + SM4_BLOCK_SIZE, enced_buf, enced_len);
+	gmssl_secure_clear(enced_buf, sizeof(enced_buf));
 	*puiKeyLength = 16 + enced_len;
 
 	// append key to key_list
@@ -2117,6 +2158,8 @@ int SDF_ImportKeyWithKEK(
 	SM4_KEY sm4_key;
 	const uint8_t *iv;
 	const uint8_t *enced;
+	uint8_t tmp[SOFTSDF_KEK_WRAPPED_MAX - SM4_BLOCK_SIZE];
+	size_t tmp_len = 0;
 	size_t enced_len;
 	SOFTSDF_KEY *key;
 
@@ -2163,7 +2206,7 @@ int SDF_ImportKeyWithKEK(
 		error_print();
 		return SDR_INARGERR;
 	}
-	if (uiKeyLength > SM4_BLOCK_SIZE + SOFTSDF_MAX_KEY_SIZE) {
+	if (uiKeyLength > SOFTSDF_KEK_WRAPPED_MAX) {
 		error_print();
 		return SDR_INARGERR;
 	}
@@ -2179,14 +2222,26 @@ int SDF_ImportKeyWithKEK(
 	enced = pucKey + SM4_BLOCK_SIZE;
 	enced_len = uiKeyLength - SM4_BLOCK_SIZE;
 
+	/* decrypt into tmp (bounded by the wrapped-blob upper bound), then
+	 * copy only a <= SOFTSDF_MAX_KEY_SIZE plaintext into key->key */
 	sm4_set_decrypt_key(&sm4_key, kek);
-	if (sm4_cbc_padding_decrypt(&sm4_key, iv, enced, enced_len, key->key, &key->key_size) != 1) {
+	if (sm4_cbc_padding_decrypt(&sm4_key, iv, enced, enced_len, tmp, &tmp_len) != 1) {
 		error_print();
 		memset(&sm4_key, 0, sizeof(sm4_key));
+		gmssl_secure_clear(tmp, sizeof(tmp));
 		free(key);
 		return SDR_SYMOPERR;
 	}
 	memset(&sm4_key, 0, sizeof(sm4_key));
+	if (tmp_len == 0 || tmp_len > SOFTSDF_MAX_KEY_SIZE) {
+		error_print();
+		gmssl_secure_clear(tmp, sizeof(tmp));
+		free(key);
+		return SDR_SYMOPERR;
+	}
+	memcpy(key->key, tmp, tmp_len);
+	key->key_size = tmp_len;
+	gmssl_secure_clear(tmp, sizeof(tmp));
 
 	// append key to key_list
 	if (session->key_list == NULL) {
@@ -2292,9 +2347,6 @@ int SDF_DestroyKey(
 	}
 
 	current = session->key_list;
-	{
-		assert(current != NULL);
-	}
 	prev = NULL;
 	while (current != NULL && current != (SOFTSDF_KEY *)hKeyHandle) {
 		prev = current;
@@ -2557,7 +2609,7 @@ int SDF_ExternalVerify_ECC(
 	memcpy(point.y, pucPublicKey->y + ECCref_MAX_LEN - 32, 32);
 	if (sm2_z256_point_from_bytes(&public_key, (uint8_t *)&point) != 1) {
 		error_print();
-		return -1;
+		return SDR_INARGERR;
 	}
 	if (sm2_key_set_public_key(&sm2_key, &public_key) != 1) {
 		error_print();
@@ -2885,6 +2937,11 @@ int SDF_ExternalEncrypt_ECC(
 	}
 
 	if (!pucData) {
+		error_print();
+		return SDR_INARGERR;
+	}
+
+	if (pucEncData == NULL) {
 		error_print();
 		return SDR_INARGERR;
 	}

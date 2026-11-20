@@ -96,7 +96,14 @@ $ softsdfinit -kek 1 -key 1 -pass P@ssw0rd
 
 ### 编译
 
-首先以静态库的方式编译、安装 GmSSL。从 https://github.com/guanzhi/GmSSL 下载 GmSSL 的最新源代码。在源代码目录执行如下操作：
+首先以静态库的方式编译、安装 GmSSL。从 https://github.com/guanzhi/GmSSL 下载 GmSSL 源代码，checkout 钉定修订 `24ae482701a7b124826c382fffc55c19f76d475d`（3.3.0-dev.1183，含 `sm2_key_exchange`，与本仓 CI 同一 SHA）：
+
+```sh
+git clone https://github.com/guanzhi/GmSSL
+git -C GmSSL checkout 24ae482701a7b124826c382fffc55c19f76d475d
+```
+
+在源代码目录执行如下操作：
 
 ```sh
 cmake -S . -B build \

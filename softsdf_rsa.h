@@ -38,8 +38,9 @@ int softsdf_rsa_private_op(const RSArefPrivateKey *priv,
 int softsdf_rsa_pkcs1_encrypt(const RSArefPublicKey *pub,
 	const uint8_t *in, size_t inlen, uint8_t *out); /* out = modulus bytes */
 int softsdf_rsa_pkcs1_decrypt(const RSArefPrivateKey *priv,
-	const uint8_t *in, size_t inlen, uint8_t *out, size_t *outlen);
+	const uint8_t *in, size_t inlen, uint8_t *out, size_t outcap,
+	size_t *outlen);
 int softsdf_rsa_pkcs1_unpad(const uint8_t *em, size_t emlen,
-	uint8_t *out, size_t *outlen);
+	uint8_t *out, size_t outcap, size_t *outlen);
 
 #endif

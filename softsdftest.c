@@ -636,7 +636,8 @@ static int test_rsa(void *h)
 		unsigned char ref[16];
 
 		/* stdlib-equivalent unwrap: PKCS1 decrypt of the wrapped blob */
-		CHECK(softsdf_rsa_pkcs1_decrypt(&ext_priv, wrapped, wlen, k2, &k2len) == 0);
+		CHECK(softsdf_rsa_pkcs1_decrypt(&ext_priv, wrapped, wlen, k2,
+			sizeof(k2), &k2len) == 0);
 		CHECK(k2len == 16);
 		ctlen = sizeof(ct1);
 		CHECK_RV(SDF_Encrypt(h, kh, SGD_SM4_ECB, NULL, pt, sizeof(pt), ct1, &ctlen));
@@ -655,7 +656,7 @@ static int test_rsa(void *h)
 	CHECK_RV(SDF_ExternalPrivateKeyOperation_RSA(h, &ext_priv, de_out,
 		de_out_len, em, &olen));
 	CHECK(olen == 128);
-	CHECK(softsdf_rsa_pkcs1_unpad(em, olen, out1, &mlen) == 0);
+	CHECK(softsdf_rsa_pkcs1_unpad(em, olen, out1, sizeof(out1), &mlen) == 0);
 	CHECK(mlen == 16);
 	/* exchanged K equals the IPK handle's key */
 	{
@@ -667,6 +668,23 @@ static int test_rsa(void *h)
 		CHECK_RV(SDF_Encrypt(h, kh1, SGD_SM4_ECB, NULL, pt, sizeof(pt),
 			ct1, &ctlen));
 		CHECK(memcmp(ref, ct1, 16) == 0);
+	}
+
+	/* oversized PKCS#1 plaintext (245 bytes): unpad yields 245 > 64-byte
+	 * session_key; must be rejected with SDR_SKOPERR, never memcpy'd */
+	{
+		unsigned char big_pt[245];
+		unsigned char big_env[256];
+		unsigned int big_len;
+
+		CHECK_RV(SDF_ExportEncPublicKey_RSA(h, 1, &exp_pub));
+		memset(big_pt, 0x41, sizeof(big_pt));
+		CHECK(softsdf_rsa_pkcs1_encrypt(&exp_pub, big_pt, sizeof(big_pt),
+			big_env) == 0);
+		big_len = sizeof(de_out);
+		rv = SDF_ExchangeDigitEnvelopeBaseOnRSA(h, 1, &ext_pub, big_env,
+			256, de_out, &big_len);
+		CHECK(rv == SDR_SKOPERR);
 	}
 
 	/* raw asymmetric operations: m^(ed) mod N == m (both domains) */
@@ -696,6 +714,32 @@ static int test_rsa(void *h)
 	/* ImportKeyWithISK with wrong size rejected */
 	rv = SDF_ImportKeyWithISK_RSA(h, 1, wrapped, 17, &kh);
 	CHECK(rv == SDR_INARGERR);
+
+	/* C2: without key right the four ISK/Exchange entry points deny with
+	 * SDR_PARDENY (gosdf probe SKIP policy keys off this) */
+	{
+		void *hC = NULL;
+		ECCrefPublicKey ecc_pub;
+		ECCCipher cin, cout;
+		unsigned int len;
+
+		CHECK_RV(SDF_ExportEncPublicKey_ECC(h, 1, &ecc_pub));
+		memset(&cin, 0, sizeof(cin));
+		memset(&cout, 0, sizeof(cout));
+		CHECK_RV(SDF_OpenSession(deviceHandleGlobal, &hC));
+		rv = SDF_ImportKeyWithISK_RSA(hC, 1, ipk_blob, 256, &kh);
+		CHECK(rv == SDR_PARDENY);
+		len = sizeof(de_out);
+		rv = SDF_ExchangeDigitEnvelopeBaseOnRSA(hC, 1, &ext_pub, ipk_blob,
+			256, de_out, &len);
+		CHECK(rv == SDR_PARDENY);
+		rv = SDF_ImportKeyWithISK_ECC(hC, 1, &cin, &kh);
+		CHECK(rv == SDR_PARDENY);
+		rv = SDF_ExchangeDigitEnvelopeBaseOnECC(hC, 1, SGD_SM2_3, &ecc_pub,
+			&cin, &cout);
+		CHECK(rv == SDR_PARDENY);
+		SDF_CloseSession(hC);
+	}
 	return 0;
 }
 

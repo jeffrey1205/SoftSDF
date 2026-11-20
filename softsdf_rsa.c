@@ -10,6 +10,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include <gmssl/mem.h>
 #include <gmssl/rand.h>
 #include "softsdf_rsa.h"
@@ -860,6 +867,8 @@ int softsdf_rsa_pkcs1_encrypt(const RSArefPublicKey *pub,
 		goto fail;
 	if (bn_from_be(&embn, em, k) != 0)
 		goto fail;
+	if (bn_cmp(&embn, &mod) >= 0)	/* EM < N */
+		goto fail;
 	if (bn_modexp(&r, &embn, &ex, &mod) != 0)
 		goto fail;
 	bn_to_be(&r, out, k);
@@ -872,9 +881,9 @@ fail:
 }
 
 int softsdf_rsa_pkcs1_unpad(const uint8_t *em, size_t emlen,
-	uint8_t *out, size_t *outlen)
+	uint8_t *out, size_t outcap, size_t *outlen)
 {
-	size_t i;
+	size_t i, n;
 
 	if (em == NULL || out == NULL || outlen == NULL)
 		return -1;
@@ -884,8 +893,11 @@ int softsdf_rsa_pkcs1_unpad(const uint8_t *em, size_t emlen,
 		if (em[i] == 0x00) {
 			if (i < 10)	/* PS must be at least 8 bytes */
 				return -1;
-			*outlen = emlen - i - 1;
-			memcpy(out, em + i + 1, *outlen);
+			n = emlen - i - 1;
+			if (n > outcap)
+				return -1;
+			*outlen = n;
+			memcpy(out, em + i + 1, n);
 			return 0;
 		}
 	}
@@ -893,7 +905,8 @@ int softsdf_rsa_pkcs1_unpad(const uint8_t *em, size_t emlen,
 }
 
 int softsdf_rsa_pkcs1_decrypt(const RSArefPrivateKey *priv,
-	const uint8_t *in, size_t inlen, uint8_t *out, size_t *outlen)
+	const uint8_t *in, size_t inlen, uint8_t *out, size_t outcap,
+	size_t *outlen)
 {
 	uint8_t em[256];
 	size_t k;
@@ -907,7 +920,7 @@ int softsdf_rsa_pkcs1_decrypt(const RSArefPrivateKey *priv,
 		return -1;
 	if (softsdf_rsa_private_op(priv, in, inlen, em) != 0)
 		return -1;
-	return softsdf_rsa_pkcs1_unpad(em, k, out, outlen);
+	return softsdf_rsa_pkcs1_unpad(em, k, out, outcap, outlen);
 }
 
 void softsdf_rsa_pub_from_priv(const RSArefPrivateKey *priv, RSArefPublicKey *pub)
@@ -918,13 +931,35 @@ void softsdf_rsa_pub_from_priv(const RSArefPrivateKey *priv, RSArefPublicKey *pu
 	memcpy(pub->e, priv->e, sizeof(pub->e));
 }
 
+/* 私有密钥文件以 0600 创建(POSIX)/以读写属性创建(Windows),
+ * 避免 fopen 默认 0644 在写入前留下可读窗口。 */
+static FILE *rsa_open_private_file(const char *path)
+{
+	int fd;
+	FILE *file;
+
+#ifdef _WIN32
+	fd = _open(path, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+		_S_IREAD | _S_IWRITE);
+	file = fd >= 0 ? _fdopen(fd, "wb") : NULL;
+	if (fd >= 0 && file == NULL)
+		_close(fd);
+#else
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+	file = fd >= 0 ? fdopen(fd, "wb") : NULL;
+	if (fd >= 0 && file == NULL)
+		close(fd);
+#endif
+	return file;
+}
+
 int softsdf_rsa_keyfile_save(const char *path, const RSArefPrivateKey *priv)
 {
 	FILE *file;
 
 	if (path == NULL || priv == NULL)
 		return -1;
-	if ((file = fopen(path, "wb")) == NULL)
+	if ((file = rsa_open_private_file(path)) == NULL)
 		return -1;
 	if (fwrite(priv, 1, sizeof(*priv), file) != sizeof(*priv)) {
 		fclose(file);

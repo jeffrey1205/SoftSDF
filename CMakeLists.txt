@@ -43,6 +43,26 @@ if(NOT GmSSL_LIBRARY)
 	message(FATAL_ERROR "GmSSL static library not found. Set GmSSL_ROOT_DIR or GmSSL_LIBRARY.")
 endif()
 
+# fail-fast: SoftSDF calls sm2_key_exchange, absent from GmSSL <= v3.2.0;
+# without this check an old GmSSL only fails much later at link time.
+include(CheckSymbolExists)
+set(CMAKE_REQUIRED_INCLUDES ${GmSSL_INCLUDE_DIR})
+set(CMAKE_REQUIRED_INCLUDEORIES ${GmSSL_INCLUDE_DIR})
+set(CMAKE_REQUIRED_LIBRARIES ${GmSSL_LIBRARY})
+if(WIN32)
+	list(APPEND CMAKE_REQUIRED_LIBRARIES Ws2_32 Advapi32)
+endif()
+if(APPLE)
+	list(APPEND CMAKE_REQUIRED_LIBRARIES "-framework Security")
+endif()
+check_symbol_exists(sm2_key_exchange "gmssl/sm2.h" HAVE_SM2_KEY_EXCHANGE)
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_INCLUDEORIES)
+unset(CMAKE_REQUIRED_LIBRARIES)
+if(NOT HAVE_SM2_KEY_EXCHANGE)
+	message(FATAL_ERROR "GmSSL without sm2_key_exchange (need revision 24ae482701a7b124826c382fffc55c19f76d475d or later)")
+endif()
+
 message(STATUS "GmSSL include dir: ${GmSSL_INCLUDE_DIR}")
 message(STATUS "GmSSL library: ${GmSSL_LIBRARY}")
 if(GmSSL_GMSSL_EXECUTABLE)
@@ -83,9 +103,8 @@ if (ENABLE_SHA2)
 endif()
 
 # GmSSL lib is built with ENABLE_SM4_CCM; needed for the sm4_ccm_* declarations
-if (NOT WIN32)
-	add_definitions(-DENABLE_SM4_CCM)
-endif()
+# on every platform (softsdf.c calls them unconditionally).
+add_definitions(-DENABLE_SM4_CCM)
 
 
 if(APPLE)
